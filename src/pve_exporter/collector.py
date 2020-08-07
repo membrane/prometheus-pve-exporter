@@ -321,6 +321,68 @@ class TemperatureCollector(object):
 
         return metrics.values()
 
+class ClusterNodeDiskStatusCollector(object):
+    """
+    Collects Proxmox VE VM information directly from config, i.e. boot, name, onboot, etc.
+    For manual test: "pvesh get /nodes/<node>/<type>/<vmid>/config"
+
+    # HELP pve_onboot_status Proxmox vm config onboot value
+    # TYPE pve_onboot_status gauge
+    pve_onboot_status{id="qemu/113",node="XXXX",type="qemu"} 1.0
+    """
+
+    def __init__(self, pve):
+        self._pve = pve
+
+    def collect(self): # pylint: disable=missing-docstring
+        metrics = {
+            'wearout': GaugeMetricFamily(
+                'pve_disk_wearout',
+                'Proxmox vm config onboot value',
+                labels=['serial', 'node', 'type', 'dev']),
+            'health': GaugeMetricFamily(
+                'pve_disk_health',
+                'Proxmox vm config onboot value',
+                labels=['serial', 'node', 'type', 'dev']),
+            'smart': GaugeMetricFamily(
+                'pve_disk_smart_value',
+                'Proxmox vm config onboot value',
+                labels=['serial', 'node', 'type', 'dev', 'name']),
+            'smart_raw': GaugeMetricFamily(
+                'pve_disk_smart_raw',
+                'Proxmox vm config onboot value',
+                labels=['serial', 'node', 'type', 'dev', 'name']),
+        }
+
+        for node in self._pve.nodes.get():
+            if node["status"] == "online":
+                for disk in self._pve.nodes(node['node']).disks.list.get():
+                    smart = self._pve.nodes(node['node']).disks.smart.get(disk=disk['devpath'])
+
+                    if 'wearout' in disk and isinstance(disk['wearout'],int):
+                        label_values = [disk['serial'], node['node'], disk["type"], disk['devpath']]
+                        metric_value = disk['wearout']
+                        metrics['wearout'].add_metric(label_values, metric_value)
+
+                    label_values = [disk['serial'], node['node'], disk["type"], disk['devpath']]
+                    if disk['health'] == "PASSED":
+                        metric_value = 1
+                    else:
+                        metric_value = 0
+                    metrics['health'].add_metric(label_values, metric_value)
+
+                    if 'attributes' in smart:
+                        for attr in smart['attributes']:
+                            label_values = [disk['serial'], node['node'], disk["type"], disk['devpath'], attr["name"]]
+                            metric_value = attr['value']
+                            metrics['smart'].add_metric(label_values, metric_value)
+
+                            metric_value = attr['raw']
+                            metrics['smart_raw'].add_metric(label_values, metric_value)
+
+        return metrics.values()
+
+
 
 def collect_pve(config, host):
     """Scrape a host and return prometheus text format for it"""
@@ -335,4 +397,5 @@ def collect_pve(config, host):
     registry.register(ClusterNodeConfigCollector(pve))
     registry.register(VersionCollector(pve))
     registry.register(TemperatureCollector())
+    registry.register(ClusterNodeDiskStatusCollector(pve))
     return generate_latest(registry)
