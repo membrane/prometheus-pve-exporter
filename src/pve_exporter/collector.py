@@ -4,6 +4,7 @@ Prometheus collecters for Proxmox VE cluster.
 # pylint: disable=too-few-public-methods
 
 import itertools
+import sensors
 from proxmoxer import ProxmoxAPI
 
 from prometheus_client import CollectorRegistry, generate_latest
@@ -286,6 +287,41 @@ class ClusterNodeConfigCollector(object):
 
         return metrics.values()
 
+
+class TemperatureCollector(object):
+    """
+    Collects CPU and other temperatures
+
+    # HELP pve_onboot_status Proxmox vm config onboot value
+    # TYPE pve_onboot_status gauge
+    pve_onboot_status{id="qemu/113",node="XXXX",type="qemu"} 1.0
+    """
+
+    def __init__(self):
+        pass
+
+    def collect(self): # pylint: disable=missing-docstring
+        metrics = {
+            'temp': GaugeMetricFamily(
+                'pve_temperature',
+                'Temperature',
+                labels=['chip', 'chip_name', 'chip_feature']),
+        }
+
+        sensors.init()
+        try:
+            for chip in sensors.iter_detected_chips():
+                for feature in chip:
+                    label_values = ["%s" % chip, chip.adapter_name, feature.label]
+                    metric_value = feature.get_value()
+
+                    metrics['temp'].add_metric(label_values, metric_value)
+        finally:
+            sensors.cleanup()
+
+        return metrics.values()
+
+
 def collect_pve(config, host):
     """Scrape a host and return prometheus text format for it"""
 
@@ -298,4 +334,5 @@ def collect_pve(config, host):
     registry.register(ClusterInfoCollector(pve))
     registry.register(ClusterNodeConfigCollector(pve))
     registry.register(VersionCollector(pve))
+    registry.register(TemperatureCollector())
     return generate_latest(registry)
